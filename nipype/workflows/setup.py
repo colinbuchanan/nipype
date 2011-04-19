@@ -7,7 +7,8 @@ def configuration(parent_package='',top_path=None):
 
     config.add_subpackage('fsl')
     config.add_subpackage('spm')
-
+    config.add_subpackage('camino')
+    
     return config
 
 if __name__ == '__main__':

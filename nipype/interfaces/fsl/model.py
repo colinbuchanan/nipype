@@ -444,21 +444,19 @@ class FILMGLSInputSpec(FSLCommandInputSpec):
     brightness_threshold = traits.Int(min=0, argstr='-epith %d',
         desc='susan brightness threshold, otherwise it is estimated')
     full_data = traits.Bool(argstr='-v', desc='output full data')
-    # XX: Are these mutually exclusive? [SG]
-    #_estimate_xor = ['autocorr_estimate_only', 'fit_armodel', 'tukey_window',
-    #                 'multitaper_product', 'use_pava', 'autocorr_noestimate']
+    _estimate_xor = ['autocorr_estimate_only', 'fit_armodel', 'tukey_window',
+                     'multitaper_product', 'use_pava', 'autocorr_noestimate']
     autocorr_estimate_only = traits.Bool(argstr='-ac',
-                                    xor=['autocorr_noestimate'],
+                                    xor=_estimate_xor,
                    desc='perform autocorrelation estimatation only')
-    fit_armodel = traits.Bool(argstr='-ar',
+    fit_armodel = traits.Bool(argstr='-ar',xor=_estimate_xor,
         desc='fits autoregressive model - default is to use tukey with M=sqrt(numvols)')
-    tukey_window = traits.Int(argstr='-tukey %d',
+    tukey_window = traits.Int(argstr='-tukey %d',xor=_estimate_xor,
         desc='tukey window size to estimate autocorr')
-    multitaper_product = traits.Int(argstr='-mt %d',
+    multitaper_product = traits.Int(argstr='-mt %d',xor=_estimate_xor,
                desc='multitapering with slepian tapers and num is the time-bandwidth product')
     use_pava = traits.Bool(argstr='-pava', desc='estimates autocorr using PAVA')
-    autocorr_noestimate = traits.Bool(argstr='-noest',
-                                      xor=['autocorr_estimate_only'],
+    autocorr_noestimate = traits.Bool(argstr='-noest',xor=_estimate_xor,
                    desc='do not estimate autocorrs')
     output_pwdata = traits.Bool(argstr='-output_pwdata',
                    desc='output prewhitened data and average design matrix')
@@ -474,6 +472,10 @@ class FILMGLSOutputSpec(TraitedSpec):
     sigmasquareds = File(exists=True, desc='summary of residuals, See Woolrich, et. al., 2001')
     results_dir = Directory(exists=True,
                          desc='directory storing model estimation output')
+    corrections = File(exists=True,
+                       desc='statistical corrections used within FILM modelling')
+    logfile = File(exists=True,
+                   desc='FILM run logfile')
 
 class FILMGLS(FSLCommand):
     """Use FSL film_gls command to fit a design matrix to voxel timeseries
@@ -536,6 +538,11 @@ threshold=10, results_dir='stats')
         outputs['dof_file'] = os.path.join(results_dir,'dof')
         outputs['sigmasquareds'] = self._gen_fname('sigmasquareds.nii',
                                                    cwd=results_dir)
+        outputs['corrections'] = self._gen_fname('corrections.nii',
+                                                 cwd=results_dir)
+        outputs['logfile'] = self._gen_fname('logfile',
+                                             change_ext=False,
+                                             cwd=results_dir)
         return outputs
 
 
@@ -720,9 +727,17 @@ class ContrastMgrInputSpec(FSLCommandInputSpec):
                      desc='contrast file containing T-contrasts')
     fcon_file = File(exists=True, argstr='-f %s',
                      desc='contrast file containing F-contrasts')
-    stats_dir = Directory(exists=True, mandatory=True,
-                          argstr='%s', position=-2,
-                          desc='directory containing first level analysis')
+    param_estimates = InputMultiPath(File(exists=True),
+                                     argstr='', copyfile=False,
+                                     mandatory=True,
+          desc='Parameter estimates for each column of the design matrix')
+    corrections = File(exists=True, copyfile=False, mandatory=True,
+                       desc='statistical corrections used within FILM modelling')
+    dof_file = File(exists=True, argstr='', copyfile=False, mandatory=True,
+                    desc='degrees of freedom')
+    sigmasquareds = File(exists=True, argstr='', position=-2,
+                         copyfile=False, mandatory=True,
+                         desc='summary of residuals, See Woolrich, et. al., 2001')
     contrast_num = traits.Int(min=1, argstr='-cope',
                 desc='contrast number to start labeling copes from')
     suffix = traits.Str(argstr='-suffix %s',
@@ -744,11 +759,36 @@ class ContrastMgrOutputSpec(TraitedSpec):
 
 class ContrastMgr(FSLCommand):
     """Use FSL contrast_mgr command to evaluate contrasts
+
+    In interface mode this file assumes that all the required inputs are in the
+    same location.
     """
 
     _cmd = 'contrast_mgr'
     input_spec = ContrastMgrInputSpec
     output_spec = ContrastMgrOutputSpec
+    
+    def _run_interface(self, runtime):
+        # The returncode is meaningless in ContrastMgr.  So check the output
+        # in stderr and if it's set, then update the returncode
+        # accordingly.
+        runtime = super(ContrastMgr, self)._run_interface(runtime)
+        if runtime.stderr:
+            self.raise_exception(runtime)
+        return runtime
+
+    def _format_arg(self, name, trait_spec, value):
+        if name in ['param_estimates', 'corrections', 'dof_file']:
+            return ''
+        elif name in ['sigmasquareds']:
+            path, _ = os.path.split(value)
+            return path
+        else:
+            return super(ContrastMgr, self)._format_arg(name, trait_spec, value)
+
+    def _get_design_root(self, infile):
+        _, fname = os.path.split(infile)
+        return fname.split('.')[0]
 
     def _get_numcons(self):
         numtcons = 0
@@ -771,7 +811,7 @@ class ContrastMgr(FSLCommand):
 
     def _list_outputs(self):
         outputs = self._outputs().get()
-        pth = self.inputs.stats_dir
+        pth, _ = os.path.split(self.inputs.sigmasquareds)
         numtcons, numfcons = self._get_numcons()
         base_contrast = 1
         if isdefined(self.inputs.contrast_num):
@@ -1319,3 +1359,74 @@ class Cluster(FSLCommand):
                 fname = value
             return spec.argstr % fname
         return super(Cluster, self)._format_arg(name, spec, value)
+    
+class RandomiseInputSpec(FSLCommandInputSpec):    
+    in_file = File(exists=True,desc = '4D input file',argstr='-i %s', position=0, mandatory=True)
+    base_name = traits.Str('tbss_',desc = 'the rootname that all generated files will have',
+                          argstr='-o %s', position=1, usedefault=True)
+    design_mat = File(exists=True,desc = 'design matrix file',argstr='-d %s', position=2, mandatory=True)
+    tcon = File(exists=True,desc = 't contrasts file',argstr='-t %s', position=3, mandatory=True)
+    fcon = File(exists=True,desc = 'f contrasts file',argstr='-f %s')
+    mask = File(exists=True,desc = 'mask image',argstr='-m %s')
+    x_block_labels = File(exists=True,desc = 'exchangeability block labels file',argstr='-e %s')   
+    demean = traits.Bool(desc = 'demean data temporally before model fitting', argstr='-D')
+    one_sample_group_mean =  traits.Bool(desc = 'perform 1-sample group-mean test instead of generic permutation test',
+                                  argstr='-l')
+    show_total_perms = traits.Bool(desc = 'print out how many unique permutations would be generated and exit',
+                                 argstr='-q')
+    show_info_parallel_mode = traits.Bool(desc = 'print out information required for parallel mode and exit',
+                                  argstr='-Q')
+    vox_p_values = traits.Bool(desc = 'output voxelwise (corrected and uncorrected) p-value images',
+                            argstr='-x')
+    tfce = traits.Bool(desc = 'carry out Threshold-Free Cluster Enhancement', argstr='-T')
+    tfce2D = traits.Bool(desc = 'carry out Threshold-Free Cluster Enhancement with 2D optimisation',
+                         argstr='--T2')
+    f_only = traits.Bool(desc = 'calculate f-statistics only', argstr='--f_only')    
+    raw_stats_imgs = traits.Bool(desc = 'output raw ( unpermuted ) statistic images', argstr='-R')
+    p_vec_n_dist_files = traits.Bool(desc = 'output permutation vector and null distribution text files',
+                                 argstr='-P')
+    num_perm = traits.Int(argstr='-n %d', desc='number of permutations (default 5000, set to 0 for exhaustive)')
+    seed = traits.Int(argstr='--seed %d', desc='specific integer seed for random number generator')
+    var_smooth = traits.Int(argstr='-v %d', desc='use variance smoothing (std is in mm)')   
+    c_thresh = traits.Float(argstr='-c %.2f', desc='carry out cluster-based thresholding')
+    cm_thresh = traits.Float(argstr='-C %.2f', desc='carry out cluster-mass-based thresholding')
+    f_c_thresh = traits.Float(argstr='-F %.2f', desc='carry out f cluster thresholding')
+    f_cm_thresh = traits.Float(argstr='-S %.2f', desc='carry out f cluster-mass thresholding')    
+    tfce_H = traits.Float(argstr='--tfce_H %.2f', desc='TFCE height parameter (default=2)')
+    tfce_E = traits.Float(argstr='--tfce_E %.2f', desc='TFCE extent parameter (default=0.5)')
+    tfce_C = traits.Float(argstr='--tfce_C %.2f', desc='TFCE connectivity (6 or 26; default=6)')    
+    vxl = traits.List(traits.Int,argstr='--vxl %d', desc='list of numbers indicating voxelwise EVs'+
+                      'position in the design matrix (list order corresponds to files in vxf option)')
+    vxf = traits.List(traits.Int,argstr='--vxf %d', desc='list of 4D images containing voxelwise EVs'+
+                      '(list order corresponds to numbers in vxl option)')
+             
+class RandomiseOutputSpec(TraitedSpec):
+    tstat1_file = File(exists=True,desc = 'path/name of tstat image corresponding to the first t contrast')  
+
+class Randomise(FSLCommand):
+    """XXX UNSTABLE DO NOT USE
+
+    FSL Randomise: feeds the 4D projected FA data into GLM
+    modelling and thresholding
+    in order to find voxels which correlate with your model
+        
+    Example
+    -------
+    >>> import nipype.interfaces.fsl.dti as fsl
+    >>> rand = fsl.Randomise(in_file='allFA.nii', \
+    mask = 'mask.nii', \
+    tcon='design.con', \
+    design_mat='design.mat')
+    >>> rand.cmdline
+    'randomise -i allFA.nii -o tbss_ -d design.mat -t design.con -m mask.nii'
+    
+    """
+    
+    _cmd = 'randomise'
+    input_spec = RandomiseInputSpec
+    output_spec = RandomiseOutputSpec
+   
+    def _list_outputs(self):        
+        outputs = self.output_spec().get()        
+        outputs['tstat1_file'] = self._gen_fname(self.inputs.base_name,suffix='_tstat1')
+        return outputs

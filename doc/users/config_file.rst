@@ -4,19 +4,25 @@
  Configuration File
 =======================
 
-Some of the system wide options of NiPyPe can be configured using a configuration file. NiPyPe looks for the file in the local folder under the name ``nipype.cfg`` and in ``~/.nipype.cfg`` (in this order). If an option will not be specified a default value will be assumed. The file is divided into following sections:
+Some of the system wide options of NiPyPe can be configured using a
+configuration file. NiPyPe looks for the file in the local folder under the name
+``nipype.cfg`` and in ``~/.nipype.cfg`` (in this order). If an option will not
+be specified a default value will be assumed. The file is divided into following
+sections:
 
 Logging
 ~~~~~~~~~
 
 *workflow_level*
-	How detailed the logs regarding workflow should be (possible values: ``INFO`` and ``DEBUG``; default value: ``INFO``)
-
+	How detailed the logs regarding workflow should be (possible values:
+	``INFO`` and ``DEBUG``; default value: ``INFO``)
 *filemanip_level*
-	How detailed the logs regarding file operations (for example overwriting warning) should be (possible values: ``INFO`` and ``DEBUG``; default value: ``INFO``)
-
+	How detailed the logs regarding file operations (for example overwriting
+	warning) should be (possible values: ``INFO`` and ``DEBUG``; default value:
+	``INFO``)
 *interface_level*
-	How detailed the logs regarding interface execution should be (possible values: ``INFO`` and ``DEBUG``; default value: ``INFO``)
+	How detailed the logs regarding interface execution should be (possible
+	values: ``INFO`` and ``DEBUG``; default value: ``INFO``)
 *log_directory*
 	Where to store logs. (string, default value: home directory)
 *log_size*
@@ -28,27 +34,31 @@ Execution
 ~~~~~~~~~~~
 
 *plugin*
-
-        This defines which execution plugin to use. (possible values:
-        Linear, SGE, IPython; default: Linear)
+	This defines which execution plugin to use. (possible values:
+    ``Linear``, ``MultiProc``, ``SGE``, ``IPython``; default: ``Linear``)
 
 *stop_on_first_crash*
-	Should the workflow stop upon first node crashing or try to
-	execute as many nodes as possible? (possible values: ``true``
+	Should the workflow stop upon first node crashing or try to execute as many
+	nodes as possible? (possible values: ``true`` and ``false``; default value:
+	``false``)
+	
+*stop_on_first_rerun*
+	Should the workflow stop upon first node trying to recompute (by that we
+	mean rerunning a node that has been run before - this can happen due changed
+	inputs and/or hash_method since the last run). (possible values: ``true``
 	and ``false``; default value: ``false``)
 
 *hash_method*
-	Should the input files be checked for changes using their
-	content (slow, but 100% accurate) or just their size and
-	modification date (fast, but potentially prone to errors)?
-	(possible values: ``content`` and ``timestamp``; default value:
-	``content``)
+	Should the input files be checked for changes using their content (slow, but
+	100% accurate) or just their size and modification date (fast, but
+	potentially prone to errors)? (possible values: ``content`` and
+	``timestamp``; default value: ``content``)
 
 *single_thread_matlab*
-	Should all of the Matlab interfaces (including SPM) use only one
-	thread? This is useful if you are parallelizing your workflow
-	using IPython on a single multicore machine. (possible values:
-	``true`` and ``false``; default value: ``true``)
+	Should all of the Matlab interfaces (including SPM) use only one thread?
+	This is useful if you are parallelizing your workflow using MultiProc or
+	IPython on a single multicore machine. (possible values: ``true`` and
+	``false``; default value: ``true``)
 
 *display_variable*
 	What ``DISPLAY`` variable should all command line interfaces be
@@ -59,11 +69,11 @@ Execution
 	it. (possible values: any X server address; default value: not
 	set)
 
-*remove_unnecessary_outputs* 
-       This will remove any interface outputs not needed by the
-        workflow. If the required outputs from a node changes, rerunning
-        the workflow will rerun the node. (possible values: ``true`` and
-        ``false``; default value: ``true``)
+*remove_unnecessary_outputs*
+	This will remove any interface outputs not needed by the
+    workflow. If the required outputs from a node changes, rerunning
+    the workflow will rerun the node. (possible values: ``true`` and
+    ``false``; default value: ``true``)
 
 *use_relative_paths*
 	Should the paths stored in results (and used to look for inputs)

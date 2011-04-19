@@ -28,6 +28,7 @@ import tempfile
 from warnings import warn
 
 from enthought.traits.trait_errors import TraitError
+import sqlite3
 
 try:
     import pyxnat
@@ -489,44 +490,47 @@ class FSSourceInputSpec(BaseInterfaceInputSpec):
                        desc='Selects hemisphere specific outputs')
 
 class FSSourceOutputSpec(TraitedSpec):
-    T1 = File(exists=True, desc='T1 image', loc='mri')
-    aseg = File(exists=True, desc='Auto-seg image', loc='mri')
-    brain = File(exists=True, desc='brain only image', loc='mri')
-    brainmask = File(exists=True, desc='brain binary mask', loc='mri')
-    filled = File(exists=True, desc='?', loc='mri')
-    norm = File(exists=True, desc='intensity normalized image', loc='mri')
-    nu = File(exists=True, desc='?', loc='mri')
-    orig = File(exists=True, desc='original image conformed to FS space',
+    T1 = File(exists=True, desc='Intensity normalized whole-head volume', loc='mri')
+    aseg = File(exists=True, desc='Volumetric map of regions from automatic segmentation',
                 loc='mri')
-    rawavg = File(exists=True, desc='averaged input images to recon-all',
+    brain = File(exists=True, desc='Intensity normalized brain-only volume', loc='mri')
+    brainmask = File(exists=True, desc='Skull-stripped (brain-only) volume', loc='mri')
+    filled = File(exists=True, desc='Subcortical mass volume', loc='mri')
+    norm = File(exists=True, desc='Normalized skull-stripped volume', loc='mri')
+    nu = File(exists=True, desc='Non-uniformity corrected whole-head volume', loc='mri')
+    orig = File(exists=True, desc='Base image conformed to Freesurfer space',
+                loc='mri')
+    rawavg = File(exists=True, desc='Volume formed by averaging input images',
                   loc='mri')
-    ribbon = OutputMultiPath(File(exists=True), desc='cortical ribbon', loc='mri',
-                       altkey='*ribbon')
-    wm = File(exists=True, desc='white matter image', loc='mri')
-    wmparc = File(exists=True, desc='white matter parcellation', loc='mri')
-    curv = OutputMultiPath(File(exists=True), desc='surface curvature files',
+    ribbon = OutputMultiPath(File(exists=True), desc='Volumetric maps of cortical ribbons',
+                             loc='mri', altkey='*ribbon')
+    wm = File(exists=True, desc='Segmented white-matter volume', loc='mri')
+    wmparc = File(exists=True, desc='Aparc parcellation projected into subcortical white matter',
+                  loc='mri')
+    curv = OutputMultiPath(File(exists=True), desc='Maps of surface curvature',
                      loc='surf')
-    inflated = OutputMultiPath(File(exists=True), desc='inflated surface meshes',
+    inflated = OutputMultiPath(File(exists=True), desc='Inflated surface meshes',
                          loc='surf')
-    pial = OutputMultiPath(File(exists=True), desc='pial surface meshes', loc='surf')
+    pial = OutputMultiPath(File(exists=True), desc='Gray matter/pia mater surface meshes',
+                           loc='surf')
     smoothwm = OutputMultiPath(File(exists=True), loc='surf',
-                         desc='smooth white-matter surface meshes')
-    sphere = OutputMultiPath(File(exists=True), desc='spherical surface meshes',
+                         desc='Smoothed original surface meshes')
+    sphere = OutputMultiPath(File(exists=True), desc='Spherical surface meshes',
                        loc='surf')
-    sulc = OutputMultiPath(File(exists=True), desc='surface sulci files', loc='surf')
+    sulc = OutputMultiPath(File(exists=True), desc='Surface maps of sulcal depth', loc='surf')
     thickness = OutputMultiPath(File(exists=True), loc='surf',
-                          desc='surface thickness files')
-    volume = OutputMultiPath(File(exists=True), desc='surface volume files', loc='surf')
-    white = OutputMultiPath(File(exists=True), desc='white matter surface meshes',
+                          desc='Surface maps of cortical thickness')
+    volume = OutputMultiPath(File(exists=True), desc='Surface maps of cortical volume', loc='surf')
+    white = OutputMultiPath(File(exists=True), desc='White/gray matter surface meshes',
                       loc='surf')
-    label = OutputMultiPath(File(exists=True), desc='volume and surface label files',
+    label = OutputMultiPath(File(exists=True), desc='Volume and surface label files',
                       loc='label', altkey='*label')
-    annot = OutputMultiPath(File(exists=True), desc='surface annotation files',
+    annot = OutputMultiPath(File(exists=True), desc='Surface annotation files',
                       loc='label', altkey='*annot')
     aparc_aseg = OutputMultiPath(File(exists=True), loc='mri', altkey='aparc*aseg',
-                           desc='aparc+aseg file')
+                           desc='Aparc parcellation projected into aseg volume')
     sphere_reg = OutputMultiPath(File(exists=True), loc='surf', altkey='sphere.reg',
-                           desc='spherical registration file')
+                           desc='Spherical registration file')
 
 class FreeSurferSource(IOBase):
     """Generates freesurfer subject info from their directories
@@ -1046,3 +1050,42 @@ def capture_provenance():
 
 def push_provenance():
     pass
+
+class SQLiteSinkInputSpec(DynamicTraitedSpec, BaseInterfaceInputSpec):
+    database_file = File(exists=True, mandatory = True)
+    table_name = traits.Str(mandatory=True)
+
+class SQLiteSink(IOBase):
+    """Very simple frontend for storing values into SQLite database. input_names
+    correspond to input_names. 
+    
+        Examples
+        --------
+
+        >>> sql = SQLiteSink(input_names=['subject_id', 'some_measurement'])
+        >>> sql.inputs.database_file = 'my_database.db'
+        >>> sql.inputs.table_name = 'experiment_results'
+        >>> sql.inputs.subject_id = 's1'
+        >>> sql.inputs.some_measurement = 11.4
+        >>> sql.run() # doctest: +SKIP
+        
+    """
+    input_spec = SQLiteSinkInputSpec
+    
+    def __init__(self, input_names, **inputs):
+        
+        super(SQLiteSink, self).__init__(**inputs)
+
+        self._input_names = filename_to_list(input_names)
+        add_traits(self.inputs, [name for name in self._input_names])
+
+    def _list_outputs(self):
+        """Execute this module.
+        """
+        conn = sqlite3.connect(self.inputs.database_file)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO %s ("%self.inputs.table_name + ",".join(self._input_names) + ") VALUES (" + ",".join(["?"]*len(self._input_names)) + ")", 
+                  [getattr(self.inputs,name) for name in self._input_names])
+        conn.commit()
+        c.close()
+        return None
